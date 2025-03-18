@@ -5,9 +5,10 @@ import random
 import string
 import json
 import hashlib
-import time
 from faker import Faker
+import time
 
+# Green text color for terminal output
 GREEN = '\033[92m'
 RESET = '\033[0m'
 
@@ -20,79 +21,101 @@ print(f"""
 """)
 print(GREEN + '\x1b[38;5;208m⇼'*60 + RESET)
 
+# Generate random string (Username)
 def generate_random_string(length):
     letters_and_digits = string.ascii_letters + string.digits
     return ''.join(random.choice(letters_and_digits) for i in range(length))
 
+# Getting mail domains
 def get_mail_domains(proxy=None):
     url = "https://api.mail.tm/domains"
     try:
-        response = requests.get(url, proxies=proxy, timeout=10)
+        response = requests.get(url, proxies=proxy)
         if response.status_code == 200:
-            return response.json().get('hydra:member', [])
+            return response.json()['hydra:member']
+        else:
+            print(f'{GREEN}[×] E-mail Error : {response.text}{RESET}')
+            return None
     except Exception as e:
-        print(f'{GREEN}[×] Mail.tm Error: {e}{RESET}')
-    return None
+        print(f'{GREEN}[×] Error : {e}{RESET}')
+        return None
 
+# Create mail.tm account
 def create_mail_tm_account(proxy=None):
     fake = Faker()
     mail_domains = get_mail_domains(proxy)
     if mail_domains:
         domain = random.choice(mail_domains)['domain']
         username = generate_random_string(10)
-        password = fake.password(length=12, special_chars=True, digits=True, upper_case=True, lower_case=True)
+        password = fake.password()
+        birthday = fake.date_of_birth(minimum_age=18, maximum_age=45)
+        first_name = fake.first_name()
+        last_name = fake.last_name()
+
         url = "https://api.mail.tm/accounts"
         headers = {"Content-Type": "application/json"}
-        data = {"address": f"{username}@{domain}", "password": password}       
-
+        data = {"address": f"{username}@{domain}", "password": password}
+        
         try:
-            response = requests.post(url, headers=headers, json=data, proxies=proxy, timeout=10)
+            response = requests.post(url, headers=headers, json=data, proxies=proxy)
             if response.status_code == 201:
-                print(f"{GREEN}[✓] Email Created: {username}@{domain}{RESET}")
-                return f"{username}@{domain}", password
+                return f"{username}@{domain}", password, first_name, last_name, birthday
+            else:
+                print(f'{GREEN}[×] Email Error : {response.text}{RESET}')
+                return None, None, None, None, None
         except Exception as e:
-            print(f'{GREEN}[×] Email Creation Error: {e}{RESET}')
-    return None, None
+            print(f'{GREEN}[×] Error : {e}{RESET}')
+            return None, None, None, None, None
 
-def fetch_otp(email, password, proxy=None):
-    token_url = "https://api.mail.tm/token"
-    messages_url = "https://api.mail.tm/messages"
-
+# Get OTP from email inbox
+def get_facebook_otp(email, password, proxy=None):
+    url = "https://api.mail.tm/token"
+    data = {"address": email, "password": password}
+    
     try:
-        response = requests.post(token_url, json={"address": email, "password": password}, proxies=proxy, timeout=10)
+        response = requests.post(url, json=data, proxies=proxy)
         if response.status_code == 200:
-            token = response.json().get('token')
+            token = response.json()['token']
+            inbox_url = "https://api.mail.tm/messages"
             headers = {"Authorization": f"Bearer {token}"}
+
+            print(f"{GREEN}[+] Checking for OTP in email...{RESET}")
+            for _ in range(10):  # Retry for 50 seconds
+                inbox_response = requests.get(inbox_url, headers=headers, proxies=proxy)
+                if inbox_response.status_code == 200:
+                    messages = inbox_response.json()['hydra:member']
+                    for msg in messages:
+                        if "Facebook" in msg["from"]["address"]:  # Check if mail is from Facebook
+                            otp = ''.join(filter(str.isdigit, msg["subject"]))  # Extract numbers (OTP)
+                            print(f"{GREEN}[+] OTP Received: {otp}{RESET}")
+                            return otp
+                time.sleep(5)  # Wait and retry
             
-            for _ in range(10):
-                time.sleep(5)  # Wait for OTP to arrive
-                messages = requests.get(messages_url, headers=headers, proxies=proxy).json()
-                if messages and 'hydra:member' in messages:
-                    for msg in messages['hydra:member']:
-                        if "OTP" in msg.get('subject', ''):
-                            return msg['intro']  # Extract OTP
-            print(f"{GREEN}[×] OTP Not Found!{RESET}")
+            print(f'{GREEN}[×] OTP not received in time.{RESET}')
+            return None
+        else:
+            print(f'{GREEN}[×] Error getting email token: {response.text}{RESET}')
+            return None
     except Exception as e:
-        print(f'{GREEN}[×] OTP Fetching Error: {e}{RESET}')
-    return None
+        print(f'{GREEN}[×] Error : {e}{RESET}')
+        return None
 
-def register_facebook_account(email, password, otp, proxy=None):
-    fake = Faker()
-    first_name = fake.first_name()
-    last_name = fake.last_name()
-    birthday = fake.date_of_birth(minimum_age=18, maximum_age=45).strftime('%Y-%m-%d')
-    gender = random.choice(['M', 'F'])
-
+# Facebook account registration with OTP
+def register_facebook_account(email, password, first_name, last_name, birthday, proxy=None):
     api_key = '882a8490361da98702bf97a021ddc14d'
     secret = '62f8ce9f74b12f84c123cc23437a4a32'
+    gender = random.choice(['M', 'F'])
 
-    if otp:
-        print(f"{GREEN}[✓] OTP Received: {otp}{RESET}")  
+    # Get OTP from email
+    otp = get_facebook_otp(email, password, proxy)
+    if not otp:
+        print(f"{GREEN}[×] OTP not received. Skipping account.{RESET}")
+        return
 
     req = {
         'api_key': api_key,
         'attempt_login': True,
-        'birthday': birthday,
+        'birthday': birthday.strftime('%Y-%m-%d'),
         'client_country_code': 'EN',
         'fb_api_caller_class': 'com.facebook.registration.protocol.RegisterAccountMethod',
         'fb_api_req_friendly_name': 'registerAccount',
@@ -105,86 +128,56 @@ def register_facebook_account(email, password, otp, proxy=None):
         'method': 'user.register',
         'password': password,
         'reg_instance': generate_random_string(32),
-        'return_multiple_errors': True
+        'return_multiple_errors': True,
+        'otp': otp  # OTP added for verification
     }
-
+    
     sorted_req = sorted(req.items(), key=lambda x: x[0])
     sig = ''.join(f'{k}={v}' for k, v in sorted_req)
-    req['sig'] = hashlib.md5((sig + secret).encode()).hexdigest()
-    
+    ensig = hashlib.md5((sig + secret).encode()).hexdigest()
+    req['sig'] = ensig
     api_url = 'https://b-api.facebook.com/method/user.register'
-    response = requests.post(api_url, data=req, proxies=proxy, timeout=10)
+    reg = _call(api_url, req, proxy)
     
-    try:
-        reg = response.json()
-        if 'new_user_id' in reg:
-            print(f"""{GREEN}
------------ ACCOUNT CREATED -----------
-EMAIL    : {email}
-ID       : {reg['new_user_id']}
+    if reg and 'new_user_id' in reg:
+        id = reg['new_user_id']
+        token = reg['session_info']['access_token']
+        
+        print(f"""{GREEN}
+-----------GENERATED-----------
+EMAIL : {email}
+ID : {id}
 PASSWORD : {password}
-NAME     : {first_name} {last_name}
+NAME : {first_name} {last_name}
 BIRTHDAY : {birthday} 
-GENDER   : {gender}
-OTP      : {otp} (Only for Verification)
-TOKEN    : {reg['session_info']['access_token']}
-----------------------------------------{RESET}""")
-        else:
-            print(f'{GREEN}[×] Facebook Registration Failed!{RESET}')
-    except Exception as e:
-        print(f'{GREEN}[×] Registration Error: {e}{RESET}')
+GENDER : {gender}
+-----------GENERATED-----------
+Token : {token}
+-----------GENERATED-----------{RESET}""")
+    else:
+        print(f'{GREEN}[×] Failed to generate Facebook account.{RESET}')
 
+# Helper function for API call
+def _call(url, params, proxy=None, post=True):
+    headers = {'User-Agent': '[FBAN/FB4A;FBAV/35.0.0.48.273;FBDM/{density=1.33125,width=800,height=1205};FBLC/en_US;FBCR/;FBPN/com.facebook.katana;FBDV/Nexus 7;FBSV/4.1.1;FBBK/0;]'}
+    if post:
+        response = requests.post(url, data=params, headers=headers, proxies=proxy)
+    else:
+        response = requests.get(url, params=params, headers=headers, proxies=proxy)
+    return response.json()
+
+# Load proxies
 def load_proxies():
-    try:
-        with open('proxies.txt', 'r') as file:
-            proxies = [line.strip() for line in file]
-        return [{'http': f'http://{proxy}'} for proxy in proxies]
-    except:
-        print(f"{GREEN}[×] proxies.txt file not found!{RESET}")
-        return []
+    with open('proxies.txt', 'r') as file:
+        proxies = [line.strip() for line in file]
+    return [{'http': f'http://{proxy}'} for proxy in proxies]
 
-def test_proxy(proxy, q, valid_proxies):
-    try:
-        response = requests.get('https://api.mail.tm', proxies=proxy, timeout=5)
-        if response.status_code == 200:
-            valid_proxies.append(proxy)
-    except:
-        pass
-    q.task_done()
-
-def get_working_proxies():
-    proxies = load_proxies()
-    valid_proxies = []
-    q = Queue()
-
-    for proxy in proxies:
-        q.put(proxy)
-    
-    for _ in range(10):
-        worker = threading.Thread(target=worker_test_proxy, args=(q, valid_proxies))
-        worker.daemon = True
-        worker.start()
-    
-    q.join()
-    return valid_proxies
-
-def worker_test_proxy(q, valid_proxies):
-    while not q.empty():
-        proxy = q.get()
-        test_proxy(proxy, q, valid_proxies)
-
-working_proxies = get_working_proxies()
-
-if not working_proxies:
-    print(f'{GREEN}[×] No working proxies found. Please check your proxies.{RESET}')
-else:
-    num_accounts = int(input(f'{GREEN}[+] How Many Accounts You Want:  {RESET}'))
-    for _ in range(num_accounts):
-        proxy = random.choice(working_proxies)
-        email, password = create_mail_tm_account(proxy)
-        if email:
-            otp = fetch_otp(email, password, proxy)
-            if otp:
-                register_facebook_account(email, password, otp, proxy)
+# Main Execution
+proxies = load_proxies()
+for i in range(int(input(f'{GREEN}[+] How Many Accounts You Want:  {RESET}'))):
+    proxy = random.choice(proxies) if proxies else None
+    email, password, first_name, last_name, birthday = create_mail_tm_account(proxy)
+    if email:
+        register_facebook_account(email, password, first_name, last_name, birthday, proxy)
 
 print(GREEN + '\x1b[38;5;208m⇼'*60 + RESET)
